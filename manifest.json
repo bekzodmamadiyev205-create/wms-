@@ -1,0 +1,14 @@
+{
+  "name": "TSD WMS — Ombor terminali",
+  "short_name": "TSD WMS",
+  "description": "Scan-driven warehouse management interface for TSD handheld terminals.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1E293B",
+  "theme_color": "#1E293B",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "/apple-icon.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}

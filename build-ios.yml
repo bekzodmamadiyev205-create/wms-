@@ -1,0 +1,122 @@
+name: Build iOS IPA
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Create Web Directory
+        run: |
+          mkdir -p www
+          cat << 'EOF' > www/index.html
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+            <title>Nakladnoy Printer</title>
+            <style>
+              * { box-sizing: border-box; }
+              html, body {
+                margin: 0;
+                padding: 0;
+                width: 100vw;
+                height: 100vh;
+                background-color: #000000;
+                overflow: hidden;
+              }
+              body {
+                padding-top: env(safe-area-inset-top, 47px);
+                padding-bottom: env(safe-area-inset-bottom, 34px);
+              }
+              iframe {
+                width: 100%;
+                height: 100%;
+                border: none;
+                display: block;
+              }
+            </style>
+          </head>
+          <body>
+            <iframe id="appFrame" src="https://new-chat-ruddy-seven.vercel.app"></iframe>
+          </body>
+          </html>
+          EOF
+
+      - name: Setup Capacitor and iOS Project
+        run: |
+          npm install @capacitor/core@5.7.0 @capacitor/cli@5.7.0 @capacitor/ios@5.7.0
+          npx cap init "Nakladnoy Printer" "com.nakladnoy.app" --web-dir www
+          npx cap add ios
+
+      - name: Patch Native iOS WKWebView Delegate
+        run: |
+          cat << 'EOF' > patch_ios.py
+          import os
+
+          # Native Swift fayliga WKUIDelegate, Pop-up override va AirPrint ruxsatlarini qo'shish
+          app_delegate_path = 'ios/App/App/AppDelegate.swift'
+          
+          patch_code = """
+          import WebKit
+
+          extension CAPBridgeViewController: WKUIDelegate {
+              open override func viewDidLoad() {
+                  super.viewDidLoad()
+                  self.webView?.uiDelegate = self
+                  self.webView?.configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+              }
+
+              // window.open() chaqirilganda pop-up bloklanmasligi uchun yangi webView o'rniga joriy webView'da ochish:
+              public func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+                  if navigationAction.targetFrame == nil || !(navigationAction.targetFrame?.isMainFrame ?? false) {
+                      webView.load(navigationAction.request)
+                  }
+                  return nil
+              }
+
+              // window.print() yoki chop etish so'rovi kelganda rasmiy AirPrint oynasini ochish:
+              public func webView(_ webView: WKWebView, requestPrinting printInteractionController: UIPrintInteractionController) {
+                  printInteractionController.present(animated: true, completionHandler: nil)
+              }
+          }
+          """
+
+          with open(app_delegate_path, 'a') as f:
+              f.write("\n" + patch_code)
+
+          print("AppDelegate.swift patched successfully.")
+          EOF
+          python3 patch_ios.py
+          npx cap sync ios
+
+      - name: Build Xcode Archive
+        run: |
+          cd ios/App
+          pod install
+          xcodebuild -workspace App.xcworkspace -scheme App -sdk iphoneos -configuration Release archive -archivePath build/App.xcarchive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGNING_IDENTITY="" BUILD_LIBRARIES_FOR_DISTRIBUTION=YES
+
+      - name: Package IPA Structure
+        run: |
+          cd ios/App
+          mkdir -p build/ipa/Payload
+          cp -r build/App.xcarchive/Products/Applications/App.app build/ipa/Payload/
+          cd build/ipa
+          zip -r ../App.ipa Payload
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: App-IPA
+          path: ios/App/build/App.ipa
